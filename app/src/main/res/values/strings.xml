@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">WeType Liquid Glass</string>
+    <string name="xposed_description">Modern Liquid Glass visual enhancements for WeChat Input Method (com.tencent.wetype)</string>
+</resources>

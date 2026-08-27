@@ -1,0 +1,24 @@
+# Gradle / Kotlin
+.gradle/
+.kotlin/
+**/build/
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Signing material
+*.jks
+*.keystore
+
+# OS files
+.DS_Store
+
+# Packaged artifacts
+*.apk
+*.aab
+*.apks

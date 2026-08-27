@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Liquid Glass Keyboard Icon -->
+    <path
+        android:fillColor="#38BDF8"
+        android:pathData="M24,34 h60 c5.5,0 10,4.5 10,10 v24 c0,5.5 -4.5,10 -10,10 h-60 c-5.5,0 -10,-4.5 -10,-10 v-24 c0,-5.5 4.5,-10 10,-10 z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.9"
+        android:pathData="M26,42 h10 v8 h-10 z M42,42 h10 v8 h-10 z M58,42 h10 v8 h-10 z M74,42 h10 v8 h-10 z M34,56 h40 v8 h-40 z" />
+</vector>
