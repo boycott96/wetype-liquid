@@ -16,4 +16,8 @@ object BlurSafetyPolicy {
     fun regionalTintAlpha(configuredBackgroundAlpha: Float): Float {
         return (configuredBackgroundAlpha * 0.62f).coerceIn(0.24f, 0.50f)
     }
+
+    fun fallbackTintAlpha(configuredBackgroundAlpha: Float): Float {
+        return (configuredBackgroundAlpha * 0.65f).coerceIn(0.28f, 0.48f)
+    }
 }

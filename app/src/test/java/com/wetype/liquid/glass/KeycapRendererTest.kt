@@ -20,6 +20,8 @@ class KeycapRendererTest {
         assertEquals("100x100 must be NORMAL key", KeyType.NORMAL, normalType)
 
         assertEquals(KeyType.ACTION, KeycapRenderer.resolveKeyType(100f, 100f, "换行"))
+        assertEquals(KeyType.ACTION, KeycapRenderer.resolveKeyType(100f, 100f, "发送"))
+        assertEquals(KeyType.ACTION, KeycapRenderer.resolveKeyType(100f, 100f, "前往"))
         assertEquals(KeyType.FUNCTIONAL, KeycapRenderer.resolveKeyType(100f, 100f, "重输"))
         assertEquals(KeyType.SPACE, KeycapRenderer.resolveKeyType(100f, 100f, "空格"))
         assertEquals(KeyType.NORMAL, KeycapRenderer.resolveKeyType(170f, 100f, "ABC"))

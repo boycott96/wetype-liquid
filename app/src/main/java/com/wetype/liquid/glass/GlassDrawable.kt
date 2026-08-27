@@ -82,7 +82,7 @@ class GlassDrawable(
         val effectiveAlpha = if (regionalBlurActive) {
             BlurSafetyPolicy.regionalTintAlpha(config.backgroundAlpha)
         } else {
-            config.backgroundAlpha
+            BlurSafetyPolicy.fallbackTintAlpha(config.backgroundAlpha)
         }
         bgPaint.color = ColorResolver.getKeyboardBackgroundColor(isNight, effectiveAlpha)
         canvas.drawPath(bgPath, bgPaint)

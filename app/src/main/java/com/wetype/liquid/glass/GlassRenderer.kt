@@ -51,8 +51,8 @@ object GlassRenderer {
         val baseFillAlpha = if (isNight) config.keyFillAlphaDark else config.keyFillAlphaLight
         val boost = when (keyType) {
             KeyType.SPACE -> config.spaceKeyContrastBoost
-            KeyType.FUNCTIONAL, KeyType.ACTION -> config.functionalKeyContrastBoost
-            KeyType.NORMAL -> 0f
+            KeyType.FUNCTIONAL -> config.functionalKeyContrastBoost
+            KeyType.NORMAL, KeyType.ACTION -> 0f
         } + if (isPressed) 0.04f else 0f
 
         canvas.save()
@@ -77,15 +77,12 @@ object GlassRenderer {
 
         // Rounded background
         drawPaint.color = when (keyType) {
-            KeyType.ACTION -> ColorResolver.getActionKeyFillColor(
-                isNight,
-                (baseFillAlpha - 0.08f + boost).coerceIn(0f, 1f)
-            )
             KeyType.FUNCTIONAL -> ColorResolver.getFunctionalKeyFillColor(
                 isNight,
                 (baseFillAlpha - 0.04f + boost).coerceIn(0f, 1f)
             )
-            else -> ColorResolver.getKeyFillColor(isNight, baseFillAlpha, boost)
+            KeyType.NORMAL, KeyType.SPACE, KeyType.ACTION ->
+                ColorResolver.getKeyFillColor(isNight, baseFillAlpha, boost)
         }
         canvas.drawRoundRect(visualBounds, radius, radius, drawPaint)
 

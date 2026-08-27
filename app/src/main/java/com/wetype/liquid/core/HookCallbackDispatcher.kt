@@ -1,7 +1,11 @@
 package com.wetype.liquid.core
 
 import android.app.Dialog
+import android.app.KeyguardManager
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -10,7 +14,6 @@ import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.drawable.ColorDrawable
-import android.graphics.drawable.InsetDrawable
 import android.inputmethodservice.InputMethodService
 import android.os.Build
 import android.view.MotionEvent
@@ -27,7 +30,6 @@ import com.wetype.liquid.discovery.ViewTreeScanner
 import com.wetype.liquid.glass.BlurController
 import com.wetype.liquid.glass.ColorResolver
 import com.wetype.liquid.glass.GlassDrawable
-import com.wetype.liquid.glass.GlassKeyDrawable
 import com.wetype.liquid.glass.GlassRenderer
 import com.wetype.liquid.glass.KeyType
 import com.wetype.liquid.glass.KeycapRenderer
@@ -36,11 +38,19 @@ import java.util.WeakHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 object HookCallbackDispatcher {
+    private const val SYMBOL_RAIL_CLASS_FRAGMENT = "ImeSboAndSybKeysScrollView"
+    private const val SYMBOL_RAIL_DIVIDER_INSET_DP = 8f
+
     @Volatile
     var currentConfig: ModuleConfig = ModuleConfig()
         private set
 
     private val isInitialized = AtomicBoolean(false)
+    private var screenLifecycleReceiver: BroadcastReceiver? = null
+    @Volatile
+    private var screenWasOff = false
+    @Volatile
+    private var screenTransitionGeneration = 0
 
     private var currentImsRef: WeakReference<InputMethodService>? = null
     private var currentKeyboardRootRef: WeakReference<View>? = null
@@ -84,7 +94,18 @@ object HookCallbackDispatcher {
             onModuleConfigChanged(newConfig)
         }
 
-        // 4. Initial diagnostics report
+        // 4. Register dynamic system cross-window blur listener (Android 12+)
+        BlurController.registerCrossWindowBlurListener(appContext) { enabled ->
+            val ims = currentImsRef?.get() ?: return@registerCrossWindowBlurListener
+            val root = currentKeyboardRootRef?.get() ?: return@registerCrossWindowBlurListener
+            val isNight = ColorResolver.isNightMode(ims)
+            val density = ims.resources.displayMetrics.density
+            applyRegionalBlur(root, ims, isNight, density)
+        }
+
+        registerScreenLifecycleReceiver(appContext)
+
+        // 5. Initial diagnostics report
         DiagnosticsReporter.requestReport(appContext, immediate = true)
     }
 
@@ -169,9 +190,14 @@ object HookCallbackDispatcher {
         currentImsRef = WeakReference(ims)
         if (!currentConfig.enabled) return
 
+        if (screenWasOff) {
+            rebindBlurAfterUnlock()
+        }
+
         SafeHook.runSafe("Dispatcher_onWindowShown") {
             val window = getImsWindow(ims) ?: return@runSafe
             val density = ims.resources.displayMetrics.density
+            val isNight = ColorResolver.isNightMode(ims)
 
             HookStateRegistry.saveWindowState(window)
             window.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
@@ -179,9 +205,41 @@ object HookCallbackDispatcher {
             BlurController.applyWindowBlur(window, currentConfig.blurRadiusDp, density, ims)
             val root = currentKeyboardRootRef?.get()
             if (root != null) {
+                ensureGlassDrawable(root, isNight, density)
                 makeKeyboardHierarchyTransparent(root)
-                applyRegionalBlur(root, ims, ColorResolver.isNightMode(ims), density)
-                scheduleSymbolRailStyling(root, ColorResolver.isNightMode(ims), density)
+                applyRegionalBlur(root, ims, isNight, density)
+                scheduleSymbolRailDividerInset(root, density)
+            }
+            DiagnosticsReporter.requestReport(ims, immediate = false)
+        }
+    }
+
+    fun onStartInputView(ims: InputMethodService, info: Any?, restarting: Boolean) {
+        ensureInitialized(ims)
+        currentImsRef = WeakReference(ims)
+        if (!currentConfig.enabled) return
+
+        if (screenWasOff) {
+            rebindBlurAfterUnlock()
+        }
+
+        SafeHook.runSafe("Dispatcher_onStartInputView") {
+            val window = getImsWindow(ims)
+            val density = ims.resources.displayMetrics.density
+            val isNight = ColorResolver.isNightMode(ims)
+
+            if (window != null) {
+                HookStateRegistry.saveWindowState(window)
+                window.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+                BlurController.applyWindowBlur(window, currentConfig.blurRadiusDp, density, ims)
+            }
+
+            val root = currentKeyboardRootRef?.get()
+            if (root != null) {
+                ensureGlassDrawable(root, isNight, density)
+                makeKeyboardHierarchyTransparent(root)
+                applyRegionalBlur(root, ims, isNight, density)
+                scheduleSymbolRailDividerInset(root, density)
             }
             DiagnosticsReporter.requestReport(ims, immediate = false)
         }
@@ -197,6 +255,102 @@ object HookCallbackDispatcher {
             currentGlassDrawable?.setRegionalBlurActive(false)
             DiagnosticsReporter.requestReport(ims, immediate = false)
         }
+    }
+
+    private fun registerScreenLifecycleReceiver(context: Context) {
+        if (screenLifecycleReceiver != null) return
+
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(receiverContext: Context, intent: Intent) {
+                when (intent.action) {
+                    Intent.ACTION_SCREEN_OFF -> handleScreenOff()
+                    Intent.ACTION_USER_PRESENT -> rebindBlurAfterUnlock()
+                    Intent.ACTION_SCREEN_ON -> {
+                        val keyguard = receiverContext.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+                        if (keyguard?.isKeyguardLocked != true) {
+                            rebindBlurAfterUnlock()
+                        }
+                    }
+                }
+            }
+        }
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_USER_PRESENT)
+        }
+
+        SafeHook.runSafe("RegisterScreenLifecycleReceiver") {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("DEPRECATION")
+                context.registerReceiver(receiver, filter)
+            }
+            screenLifecycleReceiver = receiver
+        }
+    }
+
+    private fun handleScreenOff() {
+        screenWasOff = true
+        screenTransitionGeneration++
+        SafeHook.runSafe("Dispatcher_handleScreenOff") {
+            val ims = currentImsRef?.get() ?: return@runSafe
+            val root = currentKeyboardRootRef?.get()
+            BlurController.clearBlur(getImsWindow(ims), root)
+            currentGlassDrawable?.setRegionalBlurActive(false)
+            SafeHook.log(SafeHook.LogLevel.INFO, message = "Released regional blur surface for screen off")
+        }
+    }
+
+    private fun rebindBlurAfterUnlock() {
+        if (!screenWasOff || !currentConfig.enabled) return
+
+        SafeHook.runSafe("Dispatcher_rebindBlurAfterUnlock") {
+            val ims = currentImsRef?.get() ?: return@runSafe
+            val root = currentKeyboardRootRef?.get() ?: return@runSafe
+            val generation = screenTransitionGeneration
+
+            performBlurRebind(ims, root, "after user unlock")
+            screenWasOff = false
+
+            // OriginOS continues replacing compositor layers briefly after
+            // USER_PRESENT. Recreate once more after that transition settles so
+            // the blur samples the resumed app rather than a keyguard layer.
+            root.postDelayed({
+                if (generation == screenTransitionGeneration && !screenWasOff) {
+                    performBlurRebind(ims, root, "after unlock compositor settle")
+                }
+            }, 650L)
+        }
+    }
+
+    private fun performBlurRebind(ims: InputMethodService, root: View, reason: String) {
+        val window = getImsWindow(ims)
+        val density = ims.resources.displayMetrics.density
+        val isNight = ColorResolver.isNightMode(ims)
+
+        BlurController.clearBlur(window, root)
+        if (window != null) {
+            HookStateRegistry.saveWindowState(window)
+            window.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            BlurController.applyWindowBlur(window, currentConfig.blurRadiusDp, density, ims)
+        }
+
+        ensureGlassDrawable(root, isNight, density)
+        makeKeyboardHierarchyTransparent(root)
+        applyRegionalBlur(root, ims, isNight, density)
+        scheduleSymbolRailDividerInset(root, density)
+        root.invalidate()
+        SafeHook.log(SafeHook.LogLevel.INFO, message = "Recreated regional blur surface $reason")
+    }
+
+    private fun ensureGlassDrawable(root: View, isNight: Boolean, density: Float): GlassDrawable {
+        val drawable = root.background as? GlassDrawable
+            ?: GlassDrawable(currentConfig, isNight, density).also { root.background = it }
+        drawable.updateState(currentConfig, isNight)
+        currentGlassDrawable = drawable
+        return drawable
     }
 
     fun onInputViewCreated(inputView: View, ims: InputMethodService) {
@@ -221,7 +375,7 @@ object HookCallbackDispatcher {
 
             applyRegionalBlur(inputView, ims, isNight, density)
 
-            scheduleSymbolRailStyling(inputView, isNight, density)
+            scheduleSymbolRailDividerInset(inputView, density)
 
             // Scan view tree for debugging if enabled
             if (currentConfig.debugLogs || currentConfig.viewTreeExport) {
@@ -303,9 +457,15 @@ object HookCallbackDispatcher {
     }
 
     fun makeKeyboardHierarchyTransparent(view: View) {
+        // The symbol rail is a native scrollable list with its own panel,
+        // dividers and pressed states. Preserve that entire subtree instead of
+        // treating its rows as keyboard keycaps.
+        if (isSymbolRailRoot(view)) return
+
         if (view is ViewGroup) {
             for (i in 0 until view.childCount) {
                 val child = view.getChildAt(i)
+                if (isSymbolRailRoot(child)) continue
                 if (child.background != null && child.background !is GlassDrawable) {
                     HookStateRegistry.saveViewState(child, FeatureGroup.KEYBOARD_ROOT)
                     child.background = ColorDrawable(Color.TRANSPARENT)
@@ -315,48 +475,44 @@ object HookCallbackDispatcher {
         }
     }
 
-    private fun styleSymbolRail(root: View, isNight: Boolean, density: Float) {
-        if (root.javaClass.name.contains("ImeSboAndSybKeysScrollView") && root is ViewGroup) {
-            styleSymbolRailDescendants(root, isNight, density)
+    private fun isSymbolRailRoot(view: View): Boolean =
+        view.javaClass.name.contains(SYMBOL_RAIL_CLASS_FRAGMENT)
+
+    private fun scheduleSymbolRailDividerInset(root: View, density: Float) {
+        root.postDelayed({ insetSymbolRailDividers(root, density) }, 80L)
+        root.postDelayed({ insetSymbolRailDividers(root, density) }, 240L)
+    }
+
+    private fun insetSymbolRailDividers(root: View, density: Float) {
+        if (isSymbolRailRoot(root) && root is ViewGroup) {
+            insetSymbolRailRecyclerContent(root, density)
             return
         }
         if (root is ViewGroup) {
             for (i in 0 until root.childCount) {
-                styleSymbolRail(root.getChildAt(i), isNight, density)
+                insetSymbolRailDividers(root.getChildAt(i), density)
             }
         }
     }
 
-    private fun scheduleSymbolRailStyling(root: View, isNight: Boolean, density: Float) {
-        root.postDelayed({ styleSymbolRail(root, isNight, density) }, 80L)
-        root.postDelayed({ styleSymbolRail(root, isNight, density) }, 240L)
-    }
-
-    private fun styleSymbolRailDescendants(view: View, isNight: Boolean, density: Float) {
+    private fun insetSymbolRailRecyclerContent(view: View, density: Float) {
         if (view.javaClass.name == "androidx.recyclerview.widget.RecyclerView" && view is ViewGroup) {
-            val insetX = (2.5f * density).toInt()
-            val insetY = (3.5f * density).toInt()
-            for (i in 0 until view.childCount) {
-                val item = view.getChildAt(i)
-                HookStateRegistry.saveViewState(item, FeatureGroup.KEY_VIEW)
-                item.background = InsetDrawable(
-                    GlassKeyDrawable(currentConfig, isNight, density, KeyType.NORMAL),
-                    insetX,
-                    insetY,
-                    insetX,
-                    insetY
+            val horizontalInset = (SYMBOL_RAIL_DIVIDER_INSET_DP * density).toInt()
+            if (!HookStateRegistry.hasSavedState(view)) {
+                HookStateRegistry.saveViewState(view, FeatureGroup.KEY_VIEW)
+                view.setPadding(
+                    view.paddingLeft + horizontalInset,
+                    view.paddingTop,
+                    view.paddingRight + horizontalInset,
+                    view.paddingBottom
                 )
-                item.invalidate()
+                view.requestLayout()
             }
-            SafeHook.log(
-                SafeHook.LogLevel.INFO,
-                message = "Styled ${view.childCount} symbol rail key surfaces"
-            )
             return
         }
         if (view is ViewGroup) {
             for (i in 0 until view.childCount) {
-                styleSymbolRailDescendants(view.getChildAt(i), isNight, density)
+                insetSymbolRailRecyclerContent(view.getChildAt(i), density)
             }
         }
     }
@@ -423,19 +579,46 @@ object HookCallbackDispatcher {
         return true
     }
 
+    /**
+     * WeType normally uses a light label for ACTION keys because their native
+     * keycap is dark. Once ACTION uses the ordinary white glass material, keep
+     * the original alpha but switch the label RGB to the normal key text color.
+     */
+    fun onResolveKeyTextColor(button: Any, originalColor: Int): Int {
+        if (!currentConfig.enabled || !currentConfig.textContrastEnhanced) return originalColor
+
+        return SafeHook.runSafe("Dispatcher_onResolveKeyTextColor", originalColor) {
+            val buttonClass = button.javaClass
+            val boundsMethod = MethodFinder.findMethodExact(buttonClass, "t")
+                ?: MethodFinder.findMethodExact(buttonClass, "getBounds")
+                ?: MethodFinder.findMethodExact(buttonClass, "getRect")
+            val rect = boundsMethod?.invoke(button) as? Rect ?: return@runSafe originalColor
+            if (KeycapRenderer.resolveKeyType(RectF(rect), button) != KeyType.ACTION) {
+                return@runSafe originalColor
+            }
+
+            val isNight = ColorResolver.isNightMode(currentImsRef?.get())
+            val normalTextColor = ColorResolver.getPrimaryTextColor(isNight)
+            (originalColor and Color.BLACK) or (normalTextColor and 0x00FFFFFF)
+        }
+    }
+
     fun onKeyTouchEvent(view: View, event: MotionEvent) {
         if (!currentConfig.enabled || !currentConfig.pressAnimationEnabled) return
         KeycapRenderer.handleTouchEvent(view, event, currentConfig)
     }
 
     private fun applyRegionalBlur(root: View, ims: InputMethodService, isNight: Boolean, density: Float) {
+        val visibleGlassDrawable = (root.background as? GlassDrawable)?.also {
+            currentGlassDrawable = it
+        }
         BlurController.applyRegionalSurfaceBlur(
             root = root,
             config = currentConfig,
             isNight = isNight,
             density = density
         ) { active ->
-            currentGlassDrawable?.setRegionalBlurActive(active)
+            visibleGlassDrawable?.setRegionalBlurActive(active)
             DiagnosticsReporter.requestReport(ims, immediate = false)
         }
     }

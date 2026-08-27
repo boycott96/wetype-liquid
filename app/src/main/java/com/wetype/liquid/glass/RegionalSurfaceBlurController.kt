@@ -135,19 +135,14 @@ object RegionalSurfaceBlurController {
         }
     }
 
+    fun refreshOrReapply() {
+        val surfaceView = currentSurfaceRef?.get() ?: return
+        surfaceView.requestReapplyBlur()
+    }
+
     private fun handleSurfaceResult(surfaceView: RegionalBlurSurfaceView, active: Boolean, error: String?) {
         if (currentSurfaceRef?.get() !== surfaceView) return
         stateCallback?.invoke(active, error)
-
-        if (!active && error != null) {
-            // A failed or blocked hidden API must not leave a potentially opaque
-            // SurfaceView over the keyboard. Remove it on the next main-loop turn.
-            surfaceView.post {
-                if (currentSurfaceRef?.get() === surfaceView) {
-                    detach()
-                }
-            }
-        }
     }
 
     private class RegionalBlurSurfaceView(
@@ -190,16 +185,23 @@ object RegionalSurfaceBlurController {
         }
 
         override fun surfaceCreated(holder: SurfaceHolder) {
-            applyBlurAndTint()
+            applyBlurAndTint(0)
         }
 
         override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-            applyBlurAndTint()
+            applyBlurAndTint(0)
         }
 
         override fun surfaceDestroyed(holder: SurfaceHolder) {
             clearSurfaceBlur()
             isBlurActive = false
+            onResult(this, false, null)
+        }
+
+        fun requestReapplyBlur() {
+            if (holder.surface.isValid) {
+                applyBlurAndTint(0)
+            }
         }
 
         fun updateStyle(radiusPx: Int, cornerRadiusPx: Float, tintColor: Int) {
@@ -207,7 +209,7 @@ object RegionalSurfaceBlurController {
             this.cornerRadiusPx = cornerRadiusPx
             this.tintColor = tintColor
             if (holder.surface.isValid) {
-                applyBlurAndTint()
+                applyBlurAndTint(0)
             }
         }
 
@@ -232,12 +234,21 @@ object RegionalSurfaceBlurController {
             layoutParams = params
         }
 
-        private fun applyBlurAndTint() {
+        private fun applyBlurAndTint(retryAttempt: Int = 0) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
                 onResult(this, false, "Regional Surface blur requires Android 12+")
                 return
             }
-            if (width <= 0 || height <= 0 || !holder.surface.isValid) return
+            if (width <= 0 || height <= 0 || !holder.surface.isValid) {
+                if (retryAttempt < 3) {
+                    postDelayed({
+                        if (currentSurfaceRef?.get() === this) {
+                            applyBlurAndTint(retryAttempt + 1)
+                        }
+                    }, 80L * (retryAttempt + 1))
+                }
+                return
+            }
 
             drawTintBuffer()
 
@@ -245,10 +256,24 @@ object RegionalSurfaceBlurController {
                 surfaceControl
             } catch (t: Throwable) {
                 onResult(this, false, "SurfaceControl unavailable: ${t.message}")
+                if (retryAttempt < 3) {
+                    postDelayed({
+                        if (currentSurfaceRef?.get() === this) {
+                            applyBlurAndTint(retryAttempt + 1)
+                        }
+                    }, 100L * (retryAttempt + 1))
+                }
                 return
             }
             if (!surfaceControl.isValid) {
                 onResult(this, false, "SurfaceControl is invalid")
+                if (retryAttempt < 3) {
+                    postDelayed({
+                        if (currentSurfaceRef?.get() === this) {
+                            applyBlurAndTint(retryAttempt + 1)
+                        }
+                    }, 100L * (retryAttempt + 1))
+                }
                 return
             }
 
@@ -259,6 +284,14 @@ object RegionalSurfaceBlurController {
             )
             isBlurActive = error == null
             onResult(this, isBlurActive, error)
+
+            if (!isBlurActive && retryAttempt < 3) {
+                postDelayed({
+                    if (currentSurfaceRef?.get() === this && !isBlurActive) {
+                        applyBlurAndTint(retryAttempt + 1)
+                    }
+                }, 120L * (retryAttempt + 1))
+            }
         }
 
         private fun drawTintBuffer() {

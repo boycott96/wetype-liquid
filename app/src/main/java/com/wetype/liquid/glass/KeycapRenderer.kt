@@ -241,6 +241,7 @@ object KeycapRenderer {
         if (
             normalized.contains("换行") || normalized.contains("回车") ||
             normalized.contains("完成") || normalized.contains("发送") ||
+            normalized.contains("前往") ||
             normalized.contains("搜索") || normalized.contains("下一步") ||
             normalized == "enter" || normalized == "return" || normalized == "go" ||
             normalized == "done" || normalized == "send" || normalized == "search"

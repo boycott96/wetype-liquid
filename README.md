@@ -42,7 +42,7 @@
 
 - 普通键：高不透明白色圆角 Surface；
 - 功能键：中性浅灰 Surface；
-- Action 键（搜索、换行、发送等）：更深一级的灰色层级；
+- Action 键（搜索、换行、发送、前往等）：与普通按键一致的白色键面，并保持深色文字对比度；
 - 键帽视觉边界向 hitbox 内缩，但不改变真实触控范围；
 - 细白边、顶部高光、轻微环境阴影；
 - 轻量按压缩放和透明度反馈；
@@ -54,6 +54,7 @@
 - 候选区、工具区和键盘共用同一块玻璃面板；
 - 工具图标统一透明度；
 - 候选区与键区之间使用极细分隔线；
+- T9 符号栏保留微信原生面板、滚动和按压样式，分割线左右内缩 8dp；
 - 保留微信输入法原始候选内容、输入逻辑和布局。
 
 ### 稳定性保护
@@ -173,11 +174,12 @@ adb shell su -c 'pm install -r /data/local/tmp/wetype-liquid.apk'
 
 ## 已知限制
 
-1. 当前逐键适配以微信输入法 3.5.3 的 `selfdraw` 架构为主要验证目标；新版微信输入法可能需要更新特征发现规则。
-2. 区域 Surface blur 使用 Android 隐藏 API，并依赖 ROM 的 SurfaceFlinger 实现；失败时会自动降级。
-3. Android `adjustResize` 会让宿主应用内容停在键盘上方，因此在纯白背景应用中，真实背景模糊的视觉变化可能较弱。
-4. 目标进程目前可能因 Android 包可见性限制无法解析模块 ContentProvider，设置实时同步及远程诊断仍需迁移到 libxposed RemotePreferences / Service。
-5. 模块保留微信输入法原始 T9 / QWERTY 布局和 hitbox，不复制 iOS 键盘的按键排列。
+1. **未解决 Bug：**键盘保持显示时按电源键关屏或开屏，关屏/亮屏动画的瞬间键盘区域会整体变暗，画面稳定后恢复正常。该现象目前仅在 OriginOS 15 真机复现，初步判断与系统显示电源过渡及 SurfaceFlinger/HWC 合成阶段有关，输入法进程内重建区域模糊 Surface 仍无法消除瞬态变化。
+2. 当前逐键适配以微信输入法 3.5.3 的 `selfdraw` 架构为主要验证目标；新版微信输入法可能需要更新特征发现规则。
+3. 区域 Surface blur 使用 Android 隐藏 API，并依赖 ROM 的 SurfaceFlinger 实现；失败时会自动降级。
+4. Android `adjustResize` 会让宿主应用内容停在键盘上方，因此在纯白背景应用中，真实背景模糊的视觉变化可能较弱。
+5. 目标进程目前可能因 Android 包可见性限制无法解析模块 ContentProvider，设置实时同步及远程诊断仍需迁移到 libxposed RemotePreferences / Service。
+6. 模块保留微信输入法原始 T9 / QWERTY 布局和 hitbox，不复制 iOS 键盘的按键排列。
 
 ## 安全提示
 

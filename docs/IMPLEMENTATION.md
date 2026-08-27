@@ -203,7 +203,7 @@ radiusDp * density = 0
 按键分类同时考虑文字和尺寸：
 
 - `空格` / `space` -> SPACE；
-- `搜索`、`换行`、`完成`、`发送` 等 -> ACTION；
+- `搜索`、`换行`、`完成`、`发送`、`前往` 等 -> ACTION；
 - `重输`、`删除`、`123`、`符号` 等 -> FUNCTIONAL；
 - T9 的 `ABC`、`DEF` 等宽字母组仍为 NORMAL；
 - 无文字时才使用宽高比回退判断。
@@ -214,7 +214,7 @@ radiusDp * density = 0
 NORMAL      高不透明白色圆角 Surface
 SPACE       白色宽 Surface
 FUNCTIONAL  中性浅灰 Surface
-ACTION      更深的中性灰 Surface
+ACTION      与 NORMAL 相同的白色 Surface
 ```
 
 绘制顺序：
@@ -232,7 +232,7 @@ ACTION      更深的中性灰 Surface
 - 候选栏与父容器背景透明化；
 - 工具栏图标递归设置统一透明度；
 - 键盘面板在候选区底部绘制 0.5dp 分隔线；
-- T9 左侧标点 RecyclerView 在子项完成布局后分两次补充独立圆角键帽背景；
+- T9 符号栏保留微信原生面板、滚动与按压样式，不参与透明化或键帽替换；列表内容左右内缩 8dp，使原生分割线收在圆角面板内部；
 - 所有视觉背景使用 `HookStateRegistry` 备份，停用时可恢复。
 
 ## 9. 性能策略
@@ -297,7 +297,17 @@ blurBehindRadius > 0
 adb shell su -c 'dumpsys SurfaceFlinger' | grep -C 3 backgroundBlurRadius
 ```
 
-## 12. 后续工作
+## 12. 已知未解决问题
+
+### 开屏与关屏瞬间键盘变暗
+
+触发条件：键盘保持显示时按电源键关屏，或从锁屏界面亮屏并返回原应用。
+
+表现：关屏和亮屏动画的瞬间，键盘玻璃背景会整体变暗；显示管线稳定后恢复正常。区域模糊 Surface 的释放、立即重建及延迟重建均不能消除该瞬态。
+
+当前判断：问题与 OriginOS 15 的显示电源过渡、锁屏图层及 SurfaceFlinger/HWC 合成时序有关。模块运行在微信输入法进程内，无法在系统显示过渡事务之前控制最终显示输出。本问题保持开放状态，后续应使用 Winscope / SurfaceFlinger trace 捕获电源动画期间的逐帧图层状态。
+
+## 13. 后续工作
 
 - 使用 libxposed RemotePreferences 替代目标进程不可见的 ContentProvider 配置通道；
 - 将诊断数据迁移到 libxposed Service 或可靠的模块远程文件；

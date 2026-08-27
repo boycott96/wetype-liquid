@@ -79,8 +79,8 @@ class GlassKeyDrawable(
         val baseFillAlpha = if (isNight) config.keyFillAlphaDark else config.keyFillAlphaLight
         val boost = when (keyType) {
             KeyType.SPACE -> config.spaceKeyContrastBoost
-            KeyType.FUNCTIONAL, KeyType.ACTION -> config.functionalKeyContrastBoost
-            KeyType.NORMAL -> 0f
+            KeyType.FUNCTIONAL -> config.functionalKeyContrastBoost
+            KeyType.NORMAL, KeyType.ACTION -> 0f
         } + pressRenderer.getBrightnessBoost(config.pressBrightnessBoost)
 
         canvas.save()

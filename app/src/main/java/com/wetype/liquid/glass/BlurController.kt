@@ -23,8 +23,34 @@ object BlurController {
     }
 
     private var activeBackend: BlurBackend = BlurBackend.SURFACE_FALLBACK
+    private var blurListenerRegistered = false
+    private var crossBlurListener: java.util.function.Consumer<Boolean>? = null
+    private var onCrossWindowBlurChanged: ((Boolean) -> Unit)? = null
 
     fun getActiveBackend(): BlurBackend = activeBackend
+
+    fun registerCrossWindowBlurListener(context: Context?, onBlurChanged: (Boolean) -> Unit) {
+        if (context == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.S || blurListenerRegistered) {
+            return
+        }
+        val wm = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: return
+        onCrossWindowBlurChanged = onBlurChanged
+        try {
+            val listener = java.util.function.Consumer<Boolean> { enabled ->
+                HookDiagnostics.isCrossWindowBlurSupported = enabled
+                SafeHook.log(SafeHook.LogLevel.INFO, message = "System CrossWindowBlur changed: $enabled")
+                if (enabled) {
+                    RegionalSurfaceBlurController.refreshOrReapply()
+                }
+                onCrossWindowBlurChanged?.invoke(enabled)
+            }
+            wm.addCrossWindowBlurEnabledListener(listener)
+            crossBlurListener = listener
+            blurListenerRegistered = true
+        } catch (t: Throwable) {
+            SafeHook.log(SafeHook.LogLevel.WARN, message = "Failed to register cross-window blur listener: ${t.message}")
+        }
+    }
 
     fun isCrossWindowBlurSupported(context: Context?): Boolean {
         if (context == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {

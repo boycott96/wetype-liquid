@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.inputmethodservice.InputMethodService
 import android.view.MotionEvent
 import android.view.View
+import android.view.inputmethod.EditorInfo
 import com.wetype.liquid.core.HookCallbackDispatcher
 import com.wetype.liquid.discovery.ClassFinder
 import com.wetype.liquid.discovery.ClassScorer
@@ -72,7 +73,36 @@ object LegacyHookInstaller {
             }
         }
 
-        // 3. Hook onCreateInputView
+        // 3. Hook onStartInputView
+        val onStartInputView = MethodFinder.findMethodExact(
+            imsClass,
+            "onStartInputView",
+            EditorInfo::class.java,
+            java.lang.Boolean.TYPE
+        )
+        if (onStartInputView != null) {
+            val hookId = "Legacy_IMS_onStartInputView"
+            HookDiagnostics.recordHookDiscovered(hookId, "${imsClass.name}#onStartInputView(EditorInfo, boolean)", "IMS_Lifecycle")
+            try {
+                val unhook = XposedBridge.hookMethod(onStartInputView, object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        HookDiagnostics.recordHookHit(hookId)
+                        val ims = param.thisObject as? InputMethodService
+                        val info = param.args[0]
+                        val restarting = param.args[1] as? Boolean ?: false
+                        if (ims != null) {
+                            HookCallbackDispatcher.onStartInputView(ims, info, restarting)
+                        }
+                    }
+                })
+                unhooks.add(unhook)
+                HookDiagnostics.recordHookInstalled(hookId, "${imsClass.name}#onStartInputView(EditorInfo, boolean)", "IMS_Lifecycle")
+            } catch (t: Throwable) {
+                HookDiagnostics.recordHookFailure(hookId, t)
+            }
+        }
+
+        // 4. Hook onCreateInputView
         val onCreateInputView = MethodFinder.findMethodExact(imsClass, "onCreateInputView")
         if (onCreateInputView != null) {
             val hookId = "Legacy_IMS_onCreateInputView"
@@ -266,6 +296,25 @@ object LegacyHookInstaller {
 
     private fun hookDrawMethodClasses(classLoader: ClassLoader) {
         val jClass = ClassFinder.findClass("com.tencent.wetype.plugin.hld.keyboard.selfdraw.j", classLoader)
+
+        val mainTextColorMethod = jClass?.let { MethodFinder.findMethodExact(it, "q") }
+        if (mainTextColorMethod != null && mainTextColorMethod.returnType == Integer.TYPE) {
+            val hookId = "Legacy_ImeButton_mainTextColor"
+            HookDiagnostics.recordHookDiscovered(hookId, "${jClass.name}#q()", "KeycapTextColor")
+            try {
+                val unhook = XposedBridge.hookMethod(mainTextColorMethod, object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        val originalColor = param.result as? Int ?: return
+                        param.result = HookCallbackDispatcher.onResolveKeyTextColor(param.thisObject, originalColor)
+                        HookDiagnostics.recordHookHit(hookId)
+                    }
+                })
+                unhooks.add(unhook)
+                HookDiagnostics.recordHookInstalled(hookId, "${jClass.name}#q()", "KeycapTextColor")
+            } catch (t: Throwable) {
+                HookDiagnostics.recordHookFailure(hookId, t)
+            }
+        }
 
         for (className in ClassFinder.KNOWN_DRAWMETHOD_CLASSES) {
             val clazz = ClassFinder.findClass(className, classLoader) ?: continue
